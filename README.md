@@ -3,6 +3,23 @@
 A small industrial automation project combining Python, Beckhoff TwinCAT,
 PLC programming, SQLite, n8n, and Airtable.
 
+A small industrial automation project combining Python, Beckhoff TwinCAT,
+PLC programming, SQLite, n8n, and Airtable.
+
+## Project Overview
+
+This project simulates and implements an automated production cell
+that detects, inspects, sorts, and records manufactured workpieces.
+
+The project was developed in two stages:
+
+1. A production-cell control sequence was first simulated in Python.
+2. The same state-machine logic was then implemented using
+   IEC 61131-3 Structured Text in Beckhoff TwinCAT.
+
+The resulting architecture connects real-time PLC control with
+Python-based data processing and workflow automation.
+
 ## Project Overview
 
 The project simulates and implements an automated production cell

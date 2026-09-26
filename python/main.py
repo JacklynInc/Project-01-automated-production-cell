@@ -6,6 +6,7 @@ from datetime import datetime
 from statistics import get_production_statistics
 
 import requests
+from ads_client import connect_to_plc, read_production_data, disconnect_from_plc
 
 
 # n8n Webhook
@@ -15,6 +16,15 @@ N8N_WEBHOOK_URL = "https://j01.app.n8n.cloud/webhook/Production-result"
 # Database
 connection = sqlite3.connect("data/production.db")
 cursor = connection.cursor()
+
+# Beckhoff PLC
+plc = connect_to_plc()
+print("Connected to TwinCAT PLC via ADS")
+production_data = read_production_data(plc)
+print("PLC production data:")
+print(production_data)
+
+disconnect_from_plc(plc)
 
 
 # State machine
@@ -59,7 +69,7 @@ state = State.IDLE
 
 
 # State machine
-while True:
+while False:
 
     # Emergency stop
     if emergency_stop:
