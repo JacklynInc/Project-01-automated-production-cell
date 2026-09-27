@@ -1,38 +1,19 @@
 # Automated Production Cell
 
-A small industrial automation project combining Python, Beckhoff TwinCAT,
-PLC programming, SQLite, n8n, and Airtable.
-
-A small industrial automation project combining Python, Beckhoff TwinCAT,
-PLC programming, SQLite, n8n, and Airtable.
+A small industrial automation project combining Beckhoff TwinCAT,
+PLC programming, Structured Text, Python, SQLite, n8n, and Airtable.
 
 ## Project Overview
 
-This project simulates and implements an automated production cell
-that detects, inspects, sorts, and records manufactured workpieces.
+This project implements an automated production cell that detects,
+inspects, sorts, and records manufactured workpieces.
 
-The project was developed in two stages:
+The real-time machine-control logic is implemented in a Beckhoff
+TwinCAT PLC using IEC 61131-3 Structured Text.
 
-1. A production-cell control sequence was first simulated in Python.
-2. The same state-machine logic was then implemented using
-   IEC 61131-3 Structured Text in Beckhoff TwinCAT.
-
-The resulting architecture connects real-time PLC control with
-Python-based data processing and workflow automation.
-
-## Project Overview
-
-The project simulates and implements an automated production cell
-that detects, inspects, sorts, and records manufactured workpieces.
-
-The project was developed in two stages:
-
-1. A production-cell control sequence was first simulated in Python.
-2. The same state-machine logic was then implemented using
-   IEC 61131-3 Structured Text in Beckhoff TwinCAT.
-
-This creates a bridge between software development, industrial PLC
-control, and production-data automation.
+Python communicates with the PLC through ADS and handles production
+event detection, data processing, local persistence, fault monitoring,
+and external workflow integration.
 
 ## Production Sequence
 
@@ -54,9 +35,8 @@ RECORDING
 RUNNING
 
 Fault conditions can transition the machine to:
-
 FAULT → RESET → IDLE
- 
+
 ## Technology Stack
 
 ### Industrial Automation
@@ -66,13 +46,15 @@ FAULT → RESET → IDLE
 - PLC state-machine programming
 - Timers
 - Fault handling
+- ADS communication
 
 ### Python / Data
 
 - Python
-- SQLite
 - pyads
-- Data processing and analytics
+- SQLite
+- Data processing
+- Production statistics
 
 ### Automation / Integration
 
@@ -81,35 +63,33 @@ FAULT → RESET → IDLE
 - Webhooks
 
 ## System Architecture
-                    ┌──────────────────────┐
-                    │ Beckhoff TwinCAT PLC │
-                    │                      │
-                    │ State Machine        │
-                    │ Sensors              │
-                    │ Actuators             │
-                    │ Production KPIs       │
-                    │ Fault Handling        │
-                    └──────────┬───────────┘
-                               │
-                              ADS
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ Python Data Layer     │
-                    │                      │
-                    │ Data Acquisition      │
-                    │ Processing            │
-                    │ SQLite                │
-                    │ Analytics             │
-                    └──────────┬───────────┘
-                               │
-                              n8n
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ Airtable             │
-                    │ Production Records   │
-                    └──────────────────────┘
+┌──────────────────────────┐
+│ Beckhoff TwinCAT PLC     │
+│                          │
+│ State Machine            │
+│ Sensors / Actuators      │
+│ Production Counters      │
+│ Defect Rate              │
+│ Fault Handling           │
+└────────────┬─────────────┘
+             │
+             │ ADS
+             ▼
+┌──────────────────────────┐
+│ Python / pyads           │
+│                          │
+│ PLC Data Acquisition     │
+│ Production Event Logic   │
+│ Fault Monitoring         │
+│ Statistics               │
+└────────────┬─────────────┘
+             │
+       ┌─────┴─────┐
+       ▼           ▼
+   SQLite         n8n
+                   │
+                   ▼
+                Airtable
 
 ## PLC Responsibilities
 
@@ -118,25 +98,88 @@ FAULT → RESET → IDLE
 - Sensor processing
 - Actuator control
 - Production counters
+- Defect-rate calculation
 - Fault handling
+- Operator reset
 - Machine status
 
 ## Python Responsibilities
 
-- PLC data acquisition via ADS
-- Data processing
-- Local persistence
-- Analytics
-- Integration with external automation services
+- ADS communication with the PLC
+- Production-event detection
+- OK/DEFECT event processing
+- Local SQLite persistence
+- Production statistics
+- PLC fault monitoring
+- n8n integration
+
+## Production Event Handling
+
+Python monitors the PLC production counters through ADS.
+
+When `TotalParts` increases, Python determines whether the new
+production event was an `OK` or `DEFECT` part by comparing the
+`OKParts` and `DefectParts` counters with their previous values.
+
+The production event is then:
+
+1. Stored in SQLite
+2. Added to the production statistics
+3. Sent to the n8n webhook
+4. Recorded in Airtable
+
+## Fault Handling
+
+The PLC implements fault handling using `FaultCode` and
+`MachineStatus`.
+
+Supported fault codes:
+
+| Code | Meaning |
+|---:|---|
+| 0 | No fault |
+| 1 | Emergency Stop |
+| 2 | Machine Fault |
+
+When a fault occurs, the PLC stops the conveyor and sorter outputs
+and enters the `FAULT` state.
+
+The operator must clear the fault condition and activate the
+`ResetButton` to return the machine through:
+
+FAULT → RESET → IDLE
+
+Python monitors the PLC fault state through ADS and reports new
+non-zero fault events.
+
+> **Safety note:** Emergency-stop handling in this project is
+> demonstration PLC logic and is not a safety-rated emergency-stop
+> architecture. A real machine requires appropriate safety hardware,
+> safety PLC/relay systems, and a validated safety design.
 
 ## Automation Layer
 
-n8n receives production data and sends it to Airtable,
-where production records and KPIs can be monitored.
+n8n receives production events from Python through a webhook.
+
+The workflow sends the production data to Airtable, where production
+records and KPIs can be stored and monitored.
+
+The verified data pipeline is:
+TwinCAT PLC
+    ↓
+ADS / pyads
+    ↓
+Python
+    ↓
+SQLite
+    ↓
+n8n
+    ↓
+Airtable
 
 ## Current PLC Implementation
 
-The TwinCAT PLC currently implements:
+The TwinCAT PLC implements:
 
 - Production state machine
 - Start/stop control
@@ -151,6 +194,39 @@ The TwinCAT PLC currently implements:
 - Machine-fault handling
 - Fault codes
 - Machine status
+- Operator reset
+
+## Verification
+
+The system was tested end-to-end using controlled PLC inputs.
+
+Verified:
+
+- IDLE → STARTING → RUNNING transition
+- Workpiece detection
+- Position detection
+- Inspection sequence
+- OK production cycle
+- DEFECT production cycle
+- Production counter updates
+- Defect-rate calculation
+- PLC → Python ADS communication
+- SQLite production recording
+- n8n webhook integration
+- Airtable production recording
+- PLC fault detection
+- Python fault monitoring
+- Operator reset
+
+Example verified production event:
+
+Result: OK
+SQLite Production ID: 608
+Total historical records: 110
+OK records: 65
+DEFECT records: 45
+Defect rate: 40.91%
+n8n response: 200
 
 ## Project Status
 
@@ -163,22 +239,19 @@ The TwinCAT PLC currently implements:
 - TwinCAT PLC project
 - IEC 61131-3 Structured Text implementation
 - PLC state machine
-- PLC fault handling
 - PLC production KPIs
+- PLC fault handling
+- Python ADS integration
+- Python production monitoring
+- Python fault monitoring
 - PLC/Python architecture documentation
-
-### Next
-
-- ADS communication between TwinCAT and Python
-- Python `pyads` integration
-- Reading PLC production data
-- Integrating PLC data with the existing SQLite/n8n/Airtable pipeline
+- GitHub repository
 
 ## Learning Objective
 
 The project is designed as a practical bridge between:
 
-**Mechanical Engineering → Industrial Automation → PLC Programming → Python → AI/Data Automation**
+**Mechanical Engineering → Industrial Automation → PLC Programming → Python → Data Automation**
 
 The goal is to understand how real-time industrial control systems
 can connect with modern software and data-processing workflows.
