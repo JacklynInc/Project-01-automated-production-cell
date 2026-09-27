@@ -1,215 +1,242 @@
-from enum import Enum
-import time
-from inspection import inspect_workpiece
 import sqlite3
+import time
 from datetime import datetime
-from statistics import get_production_statistics
 
 import requests
-from ads_client import connect_to_plc, read_production_data, disconnect_from_plc
+
+from ads_client import (
+    connect_to_plc,
+    read_production_data,
+    disconnect_from_plc,
+)
+from statistics import get_production_statistics
 
 
-# n8n Webhook
-N8N_WEBHOOK_URL = "https://j01.app.n8n.cloud/webhook/Production-result"
+# ============================================================
+# Configuration
+# ============================================================
+
+N8N_WEBHOOK_URL = (
+    "https://j01.app.n8n.cloud/webhook/Production-result"
+)
 
 
+# ============================================================
 # Database
+# ============================================================
+
 connection = sqlite3.connect("data/production.db")
 cursor = connection.cursor()
 
+
+# ============================================================
 # Beckhoff PLC
+# ============================================================
+
 plc = connect_to_plc()
+
 print("Connected to TwinCAT PLC via ADS")
-production_data = read_production_data(plc)
-print("PLC production data:")
-print(production_data)
-
-disconnect_from_plc(plc)
 
 
-# State machine
-class State(Enum):
-    IDLE = 1
-    STARTING = 2
-    RUNNING = 3
-    WORKPIECE_DETECTED = 4
-    INSPECTING = 5
-    SORTING = 6
-    RECORDING = 7
-    FAULT = 8
-    RESET = 9
+# ============================================================
+# Production event handling
+# ============================================================
+def monitor_plc_fault(plc, last_fault_code):
+    """Detect and report new PLC fault events."""
 
+    production_data = read_production_data(plc)
 
-# Inputs
-start = True
-stop = False
-emergency_stop = False
-reset = False
+    fault_code = production_data["fault_code"]
+    machine_status = production_data["machine_status"]
 
-from sensors import workpiece_detected, position_reached, fault_detected
-
-# Inspection
-inspection_result = None
-
-
-# Production counters
-total_parts = 0
-ok_parts = 0
-defect_parts = 0
-
-
-# Outputs
-conveyor_motor = False
-ok_sorter = False
-defect_sorter = False
-
-
-# Initial state
-state = State.IDLE
-
-
-# State machine
-while False:
-
-    # Emergency stop
-    if emergency_stop:
-        state = State.FAULT
-
-    # Simulated machine fault
-    elif fault_detected():
-        state = State.FAULT
-
-    # IDLE
-    elif state == State.IDLE:
-        if start:
-            state = State.STARTING
-
-    # STARTING
-    elif state == State.STARTING:
-        state = State.RUNNING
-
-    # RUNNING
-    elif state == State.RUNNING:
-        conveyor_motor = True
-
-        if stop:
-            conveyor_motor = False
-            state = State.IDLE
-
-        elif workpiece_detected():
-            state = State.WORKPIECE_DETECTED
-
-    # WORKPIECE DETECTED
-    elif state == State.WORKPIECE_DETECTED:
-        if position_reached():
-            state = State.INSPECTING
-
-    # INSPECTING
-    elif state == State.INSPECTING:
-        inspection_result = inspect_workpiece()
-        state = State.SORTING
-
-    # SORTING
-    elif state == State.SORTING:
-
-        if inspection_result == "OK":
-            ok_sorter = True
-            print("Sorting: OK")
-
-        else:
-            defect_sorter = True
-            print("Sorting: DEFECT")
-
-        state = State.RECORDING
-
-    # RECORDING
-    elif state == State.RECORDING:
-
-        # Create one timestamp for both database and n8n
-        timestamp = datetime.now().isoformat()
-
-        # Update counters
-        total_parts += 1
-
-        if inspection_result == "OK":
-            ok_parts += 1
-        else:
-            defect_parts += 1
-
-        # Save production result to SQLite
-        cursor.execute(
-            """
-            INSERT INTO production (result, timestamp)
-            VALUES (?, ?)
-            """,
-            (inspection_result, timestamp)
+    if fault_code != 0 and fault_code != last_fault_code:
+        print(
+            f"PLC FAULT detected: "
+            f"Code={fault_code} | "
+            f"Status={machine_status}"
         )
 
-        connection.commit()
+    return fault_code
 
-        total, ok, defect, defect_rate = get_production_statistics(connection)
+def record_plc_production(
+    plc,
+    last_total_parts,
+    last_ok_parts,
+    last_defect_parts,
+):
+    """
+    Detect a newly completed PLC production event,
+    determine whether it was OK or DEFECT,
+    store it in SQLite, and send the result to n8n.
+    """
 
+    production_data = read_production_data(plc)
+
+    current_total_parts = production_data["total_parts"]
+    current_ok_parts = production_data["ok_parts"]
+    current_defect_parts = production_data["defect_parts"]
+
+    # --------------------------------------------------------
+    # No new production event
+    # --------------------------------------------------------
+
+    if current_total_parts <= last_total_parts:
+        return (
+            last_total_parts,
+            last_ok_parts,
+            last_defect_parts,
+        )
+
+    # --------------------------------------------------------
+    # Determine production result from PLC counters
+    # --------------------------------------------------------
+
+    if current_ok_parts > last_ok_parts:
+        result = "OK"
+
+    elif current_defect_parts > last_defect_parts:
+        result = "DEFECT"
+
+    else:
         print(
-            f"Database statistics: "
-            f"Total: {total} | OK: {ok} | "
-            f"DEFECT: {defect} | Defect rate: {defect_rate:.2f}%"
+            "Warning: TotalParts increased, "
+            "but no result counter increased."
+        )
+
+        return (
+            current_total_parts,
+            current_ok_parts,
+            current_defect_parts,
+        )
+
+    # --------------------------------------------------------
+    # Timestamp
+    # --------------------------------------------------------
+
+    timestamp = datetime.now().isoformat()
+
+    # --------------------------------------------------------
+    # Store production result in SQLite
+    # --------------------------------------------------------
+
+    cursor.execute(
+        """
+        INSERT INTO production (result, timestamp)
+        VALUES (?, ?)
+        """,
+        (result, timestamp),
+    )
+
+    connection.commit()
+
+    # --------------------------------------------------------
+    # Calculate production statistics
+    # --------------------------------------------------------
+
+    total, ok, defect, defect_rate = get_production_statistics(
+        connection
+    )
+
+    production_id = cursor.lastrowid
+
+    # --------------------------------------------------------
+    # Send production data to n8n
+    # --------------------------------------------------------
+
+    try:
+        response = requests.post(
+            N8N_WEBHOOK_URL,
+            json={
+                "production_id": production_id,
+                "result": result,
+                "timestamp": timestamp,
+                "total_parts": total,
+                "ok_parts": ok,
+                "defect_parts": defect,
+                "defect_rate": defect_rate,
+            },
+            timeout=10,
+        )
+
+        print(f"n8n response: {response.status_code}")
+
+    except requests.RequestException as error:
+        print(f"n8n connection failed: {error}")
+
+    # --------------------------------------------------------
+    # Display production event
+    # --------------------------------------------------------
+
+    print(
+        f"PLC production recorded: "
+        f"ID={production_id} | "
+        f"Result={result} | "
+        f"Total={total} | "
+        f"OK={ok} | "
+        f"DEFECT={defect} | "
+        f"Defect rate={defect_rate:.2f}%"
+    )
+
+    # --------------------------------------------------------
+    # Update previous PLC counters
+    # --------------------------------------------------------
+
+    return (
+        current_total_parts,
+        current_ok_parts,
+        current_defect_parts,
+    )
+
+
+# ============================================================
+# Initial PLC counter snapshot
+# ============================================================
+
+initial_data = read_production_data(plc)
+
+last_total_parts = initial_data["total_parts"]
+last_ok_parts = initial_data["ok_parts"]
+last_defect_parts = initial_data["defect_parts"]
+last_fault_code = initial_data["fault_code"]
+
+print(
+    f"Starting PLC monitor. "
+    f"Current total parts: {last_total_parts}"
 )
 
-        # Get the actual SQLite production ID
-        production_id = cursor.lastrowid
 
-        # Send production result to n8n
-        try:
-            response = requests.post(
-                N8N_WEBHOOK_URL,
-                json={
-                    "production_id": production_id,
-                    "result": inspection_result,
-                    "timestamp": timestamp,
-                    "total_parts": total,
-                    "ok_parts": ok,
-                    "defect_parts": defect,
-                    "defect_rate": defect_rate
-                },
-                timeout=10
-            )
+# ============================================================
+# PLC monitoring loop
+# ============================================================
 
-            print(f"n8n response: {response.status_code}")
+try:
 
-        except requests.RequestException as error:
-            print(f"n8n connection failed: {error}")
+    while True:
 
-        # Production status
-        print(f"Production ID: {production_id}")
-        print(f"Production result: {inspection_result}")
-        print(f"Total: {total_parts} | OK: {ok_parts} | DEFECT: {defect_parts}")
+        (
+            last_total_parts,
+            last_ok_parts,
+            last_defect_parts,
+        ) = record_plc_production(
+            plc,
+            last_total_parts,
+            last_ok_parts,
+            last_defect_parts,
+        )
+        last_fault_code = monitor_plc_fault(
+            plc,last_fault_code,
+)
+        time.sleep(1)
 
-        # Reset sorters
-        ok_sorter = False
-        defect_sorter = False
 
-        # Continue production
-        state = State.RUNNING
+except KeyboardInterrupt:
 
-    # FAULT
-    elif state == State.FAULT:
+    print("\nPLC monitoring stopped.")
 
-        conveyor_motor = False
-        ok_sorter = False
-        defect_sorter = False
 
-        print("FAULT: Machine stopped")
+finally:
 
-        if not emergency_stop:
-            input("Fault: Press Enter to reset the machine...")
-            reset = True
+    disconnect_from_plc(plc)
+    connection.close()
 
-            if reset:
-                state = State.RESET
-                reset = False
-    # RESET
-    elif state == State.RESET:
-        state = State.IDLE
-
-    # Cycle delay
-    time.sleep(0.25)
+    print("Connections closed.")
