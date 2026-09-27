@@ -9,27 +9,28 @@ and the Python application through ADS.
 
 | Variable | PLC Type | Description |
 |---|---|---|
-| TotalParts | UDINT | Total number of produced parts |
-| OKParts | UDINT | Number of accepted parts |
-| DefectParts | UDINT | Number of defective parts |
-| DefectRate | LREAL | Percentage of defective parts |
-| FaultCode | UINT | Current machine fault code |
-| MachineStatus | STRING(30) | Current machine state |
-| InspectionOK | BOOL | Result of the latest inspection |
+| `GVL_ADS.TotalParts` | UDINT | Total number of produced parts |
+| `GVL_ADS.OKParts` | UDINT | Number of accepted parts |
+| `GVL_ADS.DefectParts` | UDINT | Number of defective parts |
+| `GVL_ADS.DefectRate` | LREAL | Percentage of defective parts |
+| `GVL_ADS.FaultCode` | UINT | Current machine fault code |
+| `GVL_ADS.MachineStatus` | STRING(30) | Current machine state |
+| `GVL_ADS.InspectionOK` | BOOL | Result of the latest inspection |
 
 ## Python → PLC
 
-The Python layer can later provide control or simulation inputs such as:
+Python writes control and simulation inputs through the ADS interface:
 
 | Variable | PLC Type | Description |
 |---|---|---|
-| StartButton | BOOL | Start production |
-| StopButton | BOOL | Stop production |
-| EmergencyStop | BOOL | Emergency stop |
-| WorkpieceSensor | BOOL | Workpiece detection |
-| PositionSensor | BOOL | Inspection position |
-| InspectionOK | BOOL | Inspection result |
-| MachineFault | BOOL | Simulated machine fault |
+| `GVL_ADS.StartButton` | BOOL | Start production |
+| `GVL_ADS.StopButton` | BOOL | Stop production |
+| `GVL_ADS.EmergencyStop` | BOOL | Demo emergency-stop input |
+| `GVL_ADS.WorkpieceSensor` | BOOL | Workpiece detection |
+| `GVL_ADS.PositionSensor` | BOOL | Inspection position |
+| `GVL_ADS.InspectionOK` | BOOL | Inspection result |
+| `GVL_ADS.MachineFault` | BOOL | Simulated machine fault |
+| `GVL_ADS.ResetButton` | BOOL | Operator reset command |
 
 ## Fault Codes
 
@@ -41,43 +42,65 @@ The Python layer can later provide control or simulation inputs such as:
 
 ## ADS Communication
 
-ADS provides the communication layer between TwinCAT and Python.
+ADS (Automation Device Specification) provides the communication
+layer between TwinCAT and Python.
 
-The Python application will use the `pyads` library to access PLC
+The Python application uses the `pyads` library to access PLC
 variables through the TwinCAT ADS interface.
 
-Conceptual example:
+Example:
 
 ```python
-total_parts = plc.read_by_name("MAIN.TotalParts")
-machine_status = plc.read_by_name("MAIN.MachineStatus")
-defect_rate = plc.read_by_name("MAIN.DefectRate")
-fault_code = plc.read_by_name("MAIN.FaultCode")
+total_parts = plc.read_by_name(
+    "GVL_ADS.TotalParts",
+    pyads.PLCTYPE_UDINT
+)
 
-##Data Architecture
+machine_status = plc.read_by_name(
+    "GVL_ADS.MachineStatus",
+    pyads.PLCTYPE_STRING
+)
+
+defect_rate = plc.read_by_name(
+    "GVL_ADS.DefectRate",
+    pyads.PLCTYPE_LREAL
+)
+
+fault_code = plc.read_by_name(
+    "GVL_ADS.FaultCode",
+    pyads.PLCTYPE_UINT
+)
+## Data Architecture
 Beckhoff TwinCAT PLC
-        │
-        │ ADS
-        ▼
-     Python
-        │
-        ├── SQLite
-        │
-        └── n8n
-              │
-              ▼
-           Airtable
+        |
+        | ADS
+        v
+Python / pyads
+        |
+        +---- SQLite
+        |
+        +---- n8n
+                |
+                v
+             Airtable
 
- ##Responsibilities
-PLC
-Real-time machine control
-State machine execution
-Production counters
-Fault handling
-Machine status
-Python
-ADS data acquisition
-Data processing
-Local persistence
-Analytics
-External automation integration
+## Responsibilities
+
+### PLC
+
+- Real-time machine control
+- State machine execution
+- Production counters
+- Fault handling
+- Machine status
+- Operator reset
+
+### Python
+
+- ADS data acquisition
+- Production-event detection
+- Data processing
+- Local persistence
+- Production statistics
+- Fault monitoring
+- External automation integration

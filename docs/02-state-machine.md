@@ -2,61 +2,71 @@
 
 ## Purpose
 
-The production cell is controlled using a state machine.
+The production cell is controlled using a state machine implemented in
+Beckhoff TwinCAT Structured Text.
+
 Each state represents a defined operating condition of the machine.
 
 ## States
 
 ### IDLE
+
 - Machine is stopped.
 - Conveyor is OFF.
-- Sorter actuators are in their home position.
+- Sorter actuators are OFF.
 - System waits for START.
 
 ### STARTING
-- Safety conditions are checked.
-- Sensors are initialized.
-- Actuators are confirmed to be in their home position.
-- If all conditions are valid, move to RUNNING.
+
+- Start sequence is active.
+- A 2-second startup timer runs.
+- After the timer completes, the machine moves to RUNNING.
 
 ### RUNNING
+
 - Conveyor is ON.
 - System monitors the workpiece sensor.
 - When a workpiece is detected, move to WORKPIECE_DETECTED.
 
 ### WORKPIECE_DETECTED
-- Conveyor movement is controlled.
+
 - System waits for the position sensor.
 - When the correct position is confirmed, move to INSPECTING.
 
 ### INSPECTING
-- The workpiece is inspected.
-- Inspection result is determined:
+
+- The workpiece inspection is simulated using `InspectionOK`.
+- The result is either:
   - OK
   - DEFECT
-- Move to SORTING.
+- After the inspection timer completes, move to SORTING.
 
 ### SORTING
-- The appropriate actuator is activated.
+
+- The appropriate sorter is activated.
 - OK workpieces are sent to the OK output.
 - Defective workpieces are sent to the DEFECT output.
-- Move to RECORDING.
+- After the sorting timer completes, move to RECORDING.
 
 ### RECORDING
+
 - Production result is recorded.
-- Production counter is updated.
+- Production counters are updated.
+- Defect rate is calculated.
 - Return to RUNNING.
 
 ### FAULT
+
 - Conveyor is stopped.
-- Actuators are placed in a safe state.
-- Fault information is recorded.
-- System waits for RESET.
+- Sorter actuators are stopped.
+- Fault information is stored in `FaultCode`.
+- System remains in FAULT until the fault condition is cleared and
+  the operator activates `ResetButton`.
 
 ### RESET
-- Fault condition is cleared.
-- Sensors and actuators are checked.
-- If the system is safe, return to IDLE.
+
+- Fault code is cleared.
+- The machine transitions back to IDLE.
 
 ## State Flow
 
@@ -84,27 +94,41 @@ RECORDING
   +--------> RUNNING
 
 
-Any State
-    |
-    v
-  FAULT
-    |
-    v
-  RESET
-    |
-    v
-  IDLE
+Emergency Stop / Machine Fault
+              |
+              v
+            FAULT
+              |
+              | ResetButton
+              v
+            RESET
+              |
+              v
+            IDLE
 
-  INPUTS
-I0.0  Start
-I0.1  Stop
-I0.2  Emergency Stop
-I0.3  Workpiece Sensor
-I0.4  Position Sensor
+## Inputs
 
-OUTPUTS
-Q0.0  Conveyor Motor
-Q0.1  OK Sorter
-Q0.2  Defect Sorter
-Q0.3  Green Indicator
-Q0.4  Red Indicator
+| Variable          | Description                  |
+| ----------------- | ---------------------------- |
+| `StartButton`     | Starts production            |
+| `StopButton`      | Stops normal production      |
+| `EmergencyStop`   | Demo emergency-stop input    |
+| `WorkpieceSensor` | Detects a workpiece          |
+| `PositionSensor`  | Confirms inspection position |
+| `InspectionOK`    | Simulated inspection result  |
+| `MachineFault`    | Simulated machine fault      |
+| `ResetButton`     | Operator reset command       |
+
+## Outputs
+
+| Variable         | Description                 |
+| ---------------- | --------------------------- |
+| `ConveyorMotor`  | Conveyor control            |
+| `OKSorter`       | OK sorting actuator         |
+| `DefectSorter`   | Defect sorting actuator     |
+| `GreenIndicator` | Normal operation indication |
+| `RedIndicator`   | Fault indication            |
+
+> **Safety note:** Emergency-stop handling in this project is
+> demonstration PLC logic and is not a safety-rated emergency-stop
+> architecture.

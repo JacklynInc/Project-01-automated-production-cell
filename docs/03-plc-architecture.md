@@ -6,7 +6,8 @@ The production cell is implemented as a Beckhoff TwinCAT PLC project
 using IEC 61131-3 Structured Text.
 
 The PLC contains the real-time machine-control logic, while Python
-handles data processing and external automation.
+handles data acquisition, production-event processing, persistence,
+and external automation.
 
 ## State Machine
 
@@ -28,11 +29,17 @@ RESET
 |---|---|---|
 | StartButton | BOOL | Starts production |
 | StopButton | BOOL | Stops normal production |
-| EmergencyStop | BOOL | Safety-related stop |
+| EmergencyStop | BOOL | Demo emergency-stop input |
 | WorkpieceSensor | BOOL | Detects a workpiece |
 | PositionSensor | BOOL | Confirms inspection position |
-| InspectionOK | BOOL | Inspection result |
-| MachineFault | BOOL | Technical machine fault |
+| InspectionOK | BOOL | Simulated inspection result |
+| MachineFault | BOOL | Simulated technical machine fault |
+| ResetButton | BOOL | Operator reset command |
+
+> **Safety note:** Emergency-stop handling in this project is implemented
+> as PLC demonstration logic. It is not a safety-rated emergency-stop
+> architecture. A real machine requires appropriate safety hardware,
+> safety PLC/relay systems, and a validated safety design.
 
 ## Outputs
 
@@ -61,6 +68,9 @@ The PLC calculates:
 - Defect Parts
 - Defect Rate
 
+These values are exposed through the `GVL_ADS` interface for Python
+monitoring.
+
 ## Fault Handling
 
 | Fault Code | Meaning |
@@ -69,29 +79,43 @@ The PLC calculates:
 | 1 | Emergency Stop |
 | 2 | Machine Fault |
 
-When a fault occurs, the conveyor and sorters are stopped and
-the machine enters the FAULT state.
+When a fault occurs, the conveyor and sorters are stopped and the
+machine enters the `FAULT` state.
+
+The fault condition must be cleared before an operator can reset the
+machine. The explicit reset sequence is:
+
+```text
+FAULT → RESET → IDLE
+
+The `ResetButton` provides the operator reset command.
 
 ## Machine Status
 
-The PLC exposes a human-readable `MachineStatus` variable for
-monitoring and future HMI/Python integration.
+The PLC exposes:
+
+- `MachineStatus`
+- `FaultCode`
+
+These variables provide the current machine state and fault condition
+to external monitoring software.
 
 ## Communication Architecture
-
-```text
 Beckhoff TwinCAT PLC
-        │
-        │ ADS
-        ▼
-     Python
-        │
-        ├── SQLite
-        │
-        └── n8n
-              │
-              ▼
-           Airtable
+        |
+        | ADS
+        v
+Python / pyads
+        |
+        +---- SQLite
+        |
+        +---- n8n
+                |
+                v
+             Airtable
+
+ADS (Automation Device Specification) is used for communication between
+the TwinCAT PLC and the Python application through `pyads`.
 
 ## Responsibilities
 
@@ -102,16 +126,20 @@ Beckhoff TwinCAT PLC
 - Sensor processing
 - Actuator control
 - Production counters
+- Defect-rate calculation
 - Fault handling
+- Operator reset
 - Machine status
 
 ### Python
 
-- PLC data acquisition
-- Data processing
-- Local persistence
-- Analytics
-- Integration with external automation services
+- ADS communication with the PLC
+- Production-event detection
+- OK/DEFECT event processing
+- Local SQLite persistence
+- Production statistics
+- PLC fault monitoring
+- n8n integration
 
 ### n8n / Airtable
 
